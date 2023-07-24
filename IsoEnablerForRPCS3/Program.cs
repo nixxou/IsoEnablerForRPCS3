@@ -83,6 +83,7 @@ internal class Program
 				if (args[0].ToLower() == targetProcess.MainModule.FileName.ToLower())
 				{
 					SendNotification("IsoEnablerForRPCS3 ERROR", $"RPCS3 is already running");
+					return;
 				}
 			}
 
