@@ -77,17 +77,6 @@ internal class Program
 
 		if (args.Length >= 1 && args[0].ToLower().EndsWith("rpcs3.exe"))
 		{
-			var targetProcess = Process.GetProcessesByName("rpcs3").FirstOrDefault(p => p.MainWindowTitle != "");
-			if (targetProcess != null)
-			{
-				if (args[0].ToLower() == targetProcess.MainModule.FileName.ToLower())
-				{
-					SendNotification("IsoEnablerForRPCS3 ERROR", $"RPCS3 is already running");
-					return;
-				}
-			}
-
-
 			string isopath = "";
 			foreach (string arg in args)
 			{
@@ -107,6 +96,15 @@ internal class Program
 			}
 			else
 			{
+				var targetProcess = Process.GetProcessesByName("rpcs3").FirstOrDefault(p => p.MainWindowTitle != "");
+				if (targetProcess != null)
+				{
+					if (args[0].ToLower() == targetProcess.MainModule.FileName.ToLower())
+					{
+						SendNotification("IsoEnablerForRPCS3 ERROR", $"RPCS3 is already running");
+						return;
+					}
+				}
 				PS3Tool ps3tool = null;
 				try
 				{
