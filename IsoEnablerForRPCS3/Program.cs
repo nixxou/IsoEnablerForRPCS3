@@ -1,5 +1,6 @@
 ﻿using CliWrap;
 using CommunityToolkit.WinUI.Notifications;
+using CreateMaps;
 using Microsoft.Win32;
 using Microsoft.Win32.TaskScheduler;
 using PS3IsoLauncher;
@@ -12,6 +13,7 @@ using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using Utils;
+using Windows.Gaming.UI;
 using Windows.Storage;
 
 internal class Program
@@ -25,10 +27,25 @@ internal class Program
 	[DllImport("shell32.dll", SetLastError = true)]
 	static extern IntPtr CommandLineToArgvW([MarshalAs(UnmanagedType.LPWStr)] string lpCmdLine, out int pNumArgs);
 
+	public static string PathRPCS = "";
+
+	public static string PathGame = "";
+
+	public static string PathBackup = "";
 
 	private static void Main(string[] args)
 	{
+		
+		bool isAdminFA = new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
+		if (!isAdminFA)
+		{
+			List<string> fakeArgs = new List<string>();
+			fakeArgs.Add(@"C:\Users\Mehdi\Downloads\rpcs3V2\rpcs3.exe");
+			fakeArgs.Add(@"C:\Users\Mehdi\Downloads\rpcs3V2\out.vhdx");
+			args = fakeArgs.ToArray();
+		}
 
+		
 		if (args.Length == 0)
 		{
 			if (!IsAppRegistered())
@@ -109,40 +126,7 @@ internal class Program
 			bool isAdmin = new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
 			if (isAdmin)
 			{
-				string ConfigDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "IsoEnabler");
-				string CmdMountFile = Path.Combine(ConfigDir, "mountcmd.txt");
-				if (File.Exists(CmdMountFile))
-				{
-					bool readOnlyMount = false;
-					var fileToMount = File.ReadAllText(CmdMountFile);
-					File.Delete(CmdMountFile);
-					if (fileToMount.EndsWith(":ro"))
-					{
-						readOnlyMount = true;
-						int lastIndex = fileToMount.LastIndexOf(":ro");
-						if (lastIndex == fileToMount.Length - ":ro".Length)
-						{
-							fileToMount = fileToMount.Substring(0, lastIndex);
-						}
-
-
-					}
-					if (File.Exists(fileToMount))
-					{
-						string resultat = "";
-						System.Threading.Tasks.Task.Run(async () => { resultat = await VHDXTool.ExecuteProcess($"$drive = (Get-Partition (Get-DiskImage -ImagePath \"{fileToMount}\").Number | Get-Volume).DriveLetter;echo $drive"); }).Wait();
-						string driveLetterString = resultat.Trim();
-						if (driveLetterString.Length == 1)
-						{
-							System.Threading.Tasks.Task.Run(async () => { resultat = await VHDXTool.ExecuteProcess($"Dismount-VHD \"{fileToMount}\""); }).Wait();
-							Thread.Sleep(2000);
-						}
-
-						
-						if (readOnlyMount) System.Threading.Tasks.Task.Run(async () => { resultat = await VHDXTool.ExecuteProcess($"Mount-VHD -Path \"{fileToMount}\" -ReadOnly"); }).Wait();
-						else System.Threading.Tasks.Task.Run(async () => { resultat = await VHDXTool.ExecuteProcess($"Mount-VHD -Path \"{fileToMount}\""); }).Wait();
-					}
-				}
+				VHDXTool.TaskMount();
 			}
 			return;
 		}
@@ -152,42 +136,36 @@ internal class Program
 			bool isAdmin = new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
 			if (isAdmin)
 			{
-				string ConfigDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "IsoEnabler");
-				string CmdMountFile = Path.Combine(ConfigDir, "unmountcmd.txt");
-				if (File.Exists(CmdMountFile))
-				{
-					var fileToMount = File.ReadAllText(CmdMountFile);
-					File.Delete(CmdMountFile);
-					if (File.Exists(fileToMount))
-					{
-						string resultat = "";
-						System.Threading.Tasks.Task.Run(async () => { resultat = await VHDXTool.ExecuteProcess($"Dismount-VHD \"{fileToMount}\""); }).Wait();
-					}
-					
-				}
+				VHDXTool.TaskUnmount();
 			}
 			return;
 		}
 
 		if (args.Length >= 1 && args[0].ToLower().EndsWith("rpcs3.exe"))
 		{
-
 			bool generatevhdx = false;
-			string PathBackup = "";
+			bool mountvhdxasreadonly = false;
+			string isopath = "";
+			string vhdxpath = "";
+
+			PathRPCS = Path.GetFullPath(args[0]);
+			PathGame = Path.GetDirectoryName(PathRPCS);
+			PathGame = Path.Combine(PathGame, "dev_hdd0", "game");
+			PathGame = Path.GetFullPath(PathGame);
+			PathBackup = Path.Combine(PathRPCS, "GameBackup");
+
+			VHDXTool.CleanJunctions(PathGame);
 
 			bool isAdmin = new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
 			if (isAdmin && args.Length == 1)
 			{
 				SendNotification("ADMIN", "MODE CREATE VHDX ON !");
-				PathBackup = VHDXTool.CreateBackupGameDir(args[0]);
+				VHDXTool.CreateBackupGameDir(PathGame, PathBackup);
 				generatevhdx = true;
 				Thread.Sleep(1000);
 			}
 
 			List<string> filteredArgs = new List<string>();
-			
-			string isopath = "";
-			string vhdxpath = "";
 			foreach (string arg in args)
 			{
 				bool hideThisArg = false;
@@ -195,30 +173,25 @@ internal class Program
 				{
 					if (File.Exists(arg))
 					{
-						isopath = arg;
+						isopath = Path.GetFullPath(arg);
 					}
 				}
 				if (arg.ToLower().EndsWith(".vhdx"))
 				{
 					if (File.Exists(arg))
 					{
-						vhdxpath = arg;
+						vhdxpath = Path.GetFullPath(arg);
 					}
 				}
-
-				/*
-				if(arg.ToLower() == "--createvhdx")
+				if(arg.ToLower() == "--readonly")
 				{
 					hideThisArg = true;
-					generatevhdx = true;
+					mountvhdxasreadonly = true;
 				}
-				*/
+				
 				if (!hideThisArg) filteredArgs.Add(arg);
 			}
-
 			args = filteredArgs.ToArray();
-
-
 
 			if (isopath != "")
 			{
@@ -290,7 +263,6 @@ internal class Program
 
 			if (vhdxpath != "")
 			{
-				
 				VHDXTool vhdxtool = null;
 				try
 				{
@@ -312,13 +284,11 @@ internal class Program
 				}
 
 
-				if (vhdxtool.Mount())
+				if (vhdxtool.Mount(mountvhdxasreadonly))
 				{
-
-
 					string ebootpath = VHDXTool.FindEboot(vhdxtool.IsoMountDrive + ":\\");
-
-
+					ebootpath = VHDXTool.LinkBackToGameDir(PathGame, vhdxtool.IsoMountDrive + ":\\", ebootpath);
+					
 					if (File.Exists(ebootpath) && ebootpath != "")
 					{
 						var arglist = new List<string>();
@@ -351,53 +321,28 @@ internal class Program
 				{
 					SendNotification("IsoEnablerForRPCS3 ERROR", $"Mount failed");
 				}
+				VHDXTool.CleanJunctions(PathGame);
 				return;
 			}
 
 			if (isopath == "" && vhdxpath == "")
 			{
-				List<string> gameDirChanged = new List<string>();
 				if (generatevhdx)
 				{
-
-
-					string PathGame = Path.GetDirectoryName(args[0]);
-					PathGame = Path.Combine(PathGame, "dev_hdd0", "game");
-					PathGame = Path.GetFullPath(PathGame);
-
 					SendNotification("IsoEnablerForRPCS3 DEBUG", $"{PathGame}");
-
-					FileSystemWatcher watcher = new FileSystemWatcher();
-					watcher.Path = PathGame;
-					watcher.Created += new FileSystemEventHandler((sender, args) =>
-					{
-						string intermediateDirectory = VHDXTool.GetIntermediateDirectory(PathGame, args.FullPath);
-						Console.WriteLine(intermediateDirectory);
-						if (!gameDirChanged.Contains(intermediateDirectory))
-						{
-							gameDirChanged.Add(intermediateDirectory);
-						}
-
-						//var zzz = args;
-						//SendNotification("IsoEnablerForRPCS3 DEBUG", $"{args.Name}");
-					});
-					watcher.EnableRaisingEvents = true;
-					watcher.IncludeSubdirectories = true;
+					VHDXTool.EnableGameDirWatcher(PathGame);
 				}
 
 				var task = DirectLaunch(args);
 				task.Wait();
 
-				if (generatevhdx && gameDirChanged.Count() > 0)
+				if (generatevhdx && VHDXTool.GameDirChanged.Count() > 0)
 				{
 					AllocConsole();
 					Console.WriteLine("Generate VHDX");
 
 					SendNotification("IsoEnablerForRPCS3 DEBUG", $"Create VHDX");
 					string outvhdx = Path.Combine(Path.GetDirectoryName(args[0]), "out.vhdx");
-					string PathGame = Path.GetDirectoryName(args[0]);
-					PathGame = Path.Combine(PathGame, "dev_hdd0", "game");
-					PathGame = Path.GetFullPath(PathGame);
 
 					if (File.Exists(outvhdx))
 					{
@@ -405,25 +350,15 @@ internal class Program
 					}
 					try
 					{
-						VHDXTool.CreateVHDX(PathGame, gameDirChanged, outvhdx);
+						VHDXTool.CreateVHDX(PathGame, outvhdx);
 
 					}
 					catch (Exception ex)
 					{
 						SendNotification("IsoEnablerForRPCS3 DEBUG", $"{ex.Message}");
 					}
-					foreach (var dir in gameDirChanged)
-					{
-						string PathDir = Path.Combine(PathGame, dir);
-						if (Directory.Exists(PathDir)) VHDXTool.EmptyFolder(PathDir);
-						if (Directory.Exists(PathDir)) Directory.Delete(PathDir);
 
-						string ExistingData = Path.Combine(PathBackup, dir);
-						if (Directory.Exists(ExistingData))
-						{
-							Directory.Move(ExistingData, PathDir);
-						}
-					}
+					VHDXTool.RestoreDirFromBackup(PathGame, PathBackup);
 
 					SendNotification("IsoEnablerForRPCS3 DEBUG", $"VHDX Created on {outvhdx}");
 					FreeConsole();
@@ -453,7 +388,6 @@ internal class Program
 
 	public static async System.Threading.Tasks.Task DirectLaunch(string[] args)
 	{
-
 		string JustRunExe = Path.Combine(Path.GetDirectoryName(Process.GetCurrentProcess().MainModule.FileName), "JustRun.exe");
 
 		var ResultRPCS2 = await Cli.Wrap(JustRunExe)

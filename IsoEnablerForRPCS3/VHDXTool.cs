@@ -1,4 +1,5 @@
-﻿using DiscUtils.Iso9660;
+﻿using CreateMaps;
+using DiscUtils.Iso9660;
 using PS3ISORebuilder;
 using System;
 using System.Collections.Generic;
@@ -10,6 +11,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Windows.Gaming.UI;
 
 namespace PS3IsoLauncher
 {
@@ -26,6 +28,8 @@ IntPtr lpSecurityAttributes
 
 		public string IsoFilePath { get; set; }
 		public char IsoMountDrive { get; set; }
+
+		public static List<String> GameDirChanged { get; set; } = new List<String>();
 
 		public VHDXTool(string isoFilePath)
 		{
@@ -44,12 +48,14 @@ IntPtr lpSecurityAttributes
 			else return '\0';
 		}
 
-		public bool Mount()
+		public bool Mount(bool AsReadOnly=false)
 		{
 			var listFreeDriveLetters = Enumerable.Range('A', 'Z' - 'A' + 1).Select(i => (Char)i + ":").Except(DriveInfo.GetDrives().Select(s => s.Name.Replace("\\", ""))).ToList();
 	
 			string ConfigDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "IsoEnabler");
 			string CmdMountFile = Path.Combine(ConfigDir, "mountcmd.txt");
+			string FileToMount = IsoFilePath;
+			if (AsReadOnly) FileToMount += ":ro";
 			File.WriteAllText(CmdMountFile, IsoFilePath);
 
 			Program.ExecuteTask("IsoEnablerMount");
@@ -100,11 +106,172 @@ IntPtr lpSecurityAttributes
 			else return false;
 		}
 
+		public static void EnableGameDirWatcher(string PathGame)
+		{
+			FileSystemWatcher watcher = new FileSystemWatcher();
+			watcher.Path = PathGame;
+			watcher.Created += new FileSystemEventHandler((sender, args) =>
+			{
+				string intermediateDirectory = VHDXTool.GetIntermediateDirectory(PathGame, args.FullPath);
+				Console.WriteLine(intermediateDirectory);
+				if (!GameDirChanged.Contains(intermediateDirectory))
+				{
+					GameDirChanged.Add(intermediateDirectory);
+				}
+			});
+			watcher.EnableRaisingEvents = true;
+			watcher.IncludeSubdirectories = true;
+		}
+
+		public static void RestoreDirFromBackup(string PathGame, string PathBackup)
+		{
+			foreach (var dir in GameDirChanged)
+			{
+				string PathDir = Path.Combine(PathGame, dir);
+				if (Directory.Exists(PathDir)) VHDXTool.EmptyFolder(PathDir);
+				if (Directory.Exists(PathDir)) Directory.Delete(PathDir);
+
+				string ExistingData = Path.Combine(PathBackup, dir);
+				if (Directory.Exists(ExistingData))
+				{
+					Directory.Move(ExistingData, PathDir);
+				}
+			}
+		}
+
+		public static void CleanJunctions(string PathGame)
+		{
+			var listDirSource = Directory.GetDirectories(PathGame);
+			foreach (var dir in listDirSource)
+			{
+				string dirName = Path.GetFullPath(dir);
+				if (IsDirectoryJunction(dirName))
+				{
+					try
+					{
+						JunctionPoint.Delete(dirName);
+					}
+					catch { }
+				}
+			}
+		}
+
+		private static bool IsDirectoryJunction(string folderPath)
+		{
+			DirectoryInfo directoryInfo = new DirectoryInfo(folderPath);
+
+			// Vérifier si l'attribut ReparsePoint est défini pour le dossier
+			return (directoryInfo.Attributes & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint;
+		}
+
+		public static void TaskMount()
+		{
+			string ConfigDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "IsoEnabler");
+			string CmdMountFile = Path.Combine(ConfigDir, "mountcmd.txt");
+			if (File.Exists(CmdMountFile))
+			{
+				bool readOnlyMount = false;
+				var fileToMount = File.ReadAllText(CmdMountFile);
+				File.Delete(CmdMountFile);
+				if (fileToMount.EndsWith(":ro"))
+				{
+					readOnlyMount = true;
+					int lastIndex = fileToMount.LastIndexOf(":ro");
+					if (lastIndex == fileToMount.Length - ":ro".Length)
+					{
+						fileToMount = fileToMount.Substring(0, lastIndex);
+					}
+
+
+				}
+				if (File.Exists(fileToMount))
+				{
+					string resultat = "";
+					System.Threading.Tasks.Task.Run(async () => { resultat = await VHDXTool.ExecuteProcess($"$drive = (Get-Partition (Get-DiskImage -ImagePath \"{fileToMount}\").Number | Get-Volume).DriveLetter;echo $drive"); }).Wait();
+					string driveLetterString = resultat.Trim();
+					if (driveLetterString.Length == 1)
+					{
+						System.Threading.Tasks.Task.Run(async () => { resultat = await VHDXTool.ExecuteProcess($"Dismount-VHD \"{fileToMount}\""); }).Wait();
+						Thread.Sleep(2000);
+					}
+
+
+					if (readOnlyMount) System.Threading.Tasks.Task.Run(async () => { resultat = await VHDXTool.ExecuteProcess($"Mount-VHD -Path \"{fileToMount}\" -ReadOnly"); }).Wait();
+					else System.Threading.Tasks.Task.Run(async () => { resultat = await VHDXTool.ExecuteProcess($"Mount-VHD -Path \"{fileToMount}\""); }).Wait();
+				}
+			}
+		}
+
+		public static void TaskUnmount()
+		{
+			string ConfigDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "IsoEnabler");
+			string CmdMountFile = Path.Combine(ConfigDir, "unmountcmd.txt");
+			if (File.Exists(CmdMountFile))
+			{
+				var fileToMount = File.ReadAllText(CmdMountFile);
+				File.Delete(CmdMountFile);
+				if (File.Exists(fileToMount))
+				{
+					string resultat = "";
+					System.Threading.Tasks.Task.Run(async () => { resultat = await VHDXTool.ExecuteProcess($"Dismount-VHD \"{fileToMount}\""); }).Wait();
+				}
+
+			}
+		}
+
+		public static string LinkBackToGameDir(string GameDir, string SourceDir, string eboot)
+		{
+			bool areGameDirAvailiable = true;
+			var listDirSource = Directory.GetDirectories(SourceDir);
+			var filteredListDirSource = FilterDirectories(listDirSource);
+
+			foreach (var dir in filteredListDirSource)
+			{
+				string dirName = Path.GetFileName(Path.GetFullPath(dir));
+				string newDir = Path.Combine(GameDir, dirName);
+				if (Directory.Exists(newDir)) areGameDirAvailiable = false;
+			}
+
+			if (areGameDirAvailiable)
+			{
+				foreach (var dir in filteredListDirSource)
+				{
+					string dirSource = Path.GetFullPath(dir);
+					string dirName = Path.GetFileName(Path.GetFullPath(dir));
+					string newDir = Path.Combine(GameDir, dirName);
+					//Create Junction
+					JunctionPoint.Create(newDir, dirSource, true);
+				}
+				if(!String.IsNullOrWhiteSpace(eboot) && File.Exists(eboot))
+				{
+					eboot = Path.GetFullPath(eboot);
+					if (eboot.StartsWith(SourceDir))
+					{
+						eboot = eboot.Remove(0, SourceDir.Length);
+						eboot.TrimStart('\\');
+						string newEboot = Path.Combine(GameDir, eboot);
+						if (File.Exists(newEboot))
+						{
+							eboot = newEboot;
+						}
+
+					}
+
+				}
+
+			}
+			return eboot;
+		}
+
 		public static string FindEboot(string sourceDir, int id = 0)
 		{
 			sourceDir = Path.GetFullPath(sourceDir);
 			string firstfile = "";
-			var firstDir = Directory.GetDirectories(sourceDir).FirstOrDefault();
+			string firstDir = "";
+			var listedir = Directory.GetDirectories(sourceDir);
+			var listDirFiltered = FilterDirectories(listedir);
+			if(listDirFiltered.Count()>0 && !String.IsNullOrEmpty(listDirFiltered[0])) firstDir = listDirFiltered[0];
+
 			if (!String.IsNullOrEmpty(firstDir))
 			{
 				if (File.Exists(Path.Combine(firstDir, "USRDIR", "EBOOT.BIN")))
@@ -139,15 +306,8 @@ IntPtr lpSecurityAttributes
 
 		}
 
-		public static string CreateBackupGameDir(string rpcs3exe)
+		public static void CreateBackupGameDir(string PathGame, string PathBackup)
 		{
-			string PathRPCS = Path.GetDirectoryName(rpcs3exe);
-			PathRPCS = Path.GetFullPath(PathRPCS);
-			string PathBackup = Path.Combine(PathRPCS, "GameBackup");
-
-			string PathGame = Path.GetDirectoryName(rpcs3exe);
-			PathGame = Path.Combine(PathGame, "dev_hdd0", "game");
-			PathGame = Path.GetFullPath(PathGame);
 
 			if (Directory.Exists(PathBackup))
 			{
@@ -161,6 +321,7 @@ IntPtr lpSecurityAttributes
 			{
 				IgnoreInaccessible = true,
 				RecurseSubdirectories = true,
+				AttributesToSkip = FileAttributes.Hidden | FileAttributes.System,
 			});
 			foreach (string file in files)
 			{
@@ -177,7 +338,10 @@ IntPtr lpSecurityAttributes
 			{
 				IgnoreInaccessible = true,
 				RecurseSubdirectories = true,
+				AttributesToSkip = FileAttributes.Hidden | FileAttributes.System,
 			});
+
+
 			foreach (string dir in dirs)
 			{
 				string newfiledir = PathBackup + dir.Remove(0, PathGame.Length);
@@ -186,8 +350,9 @@ IntPtr lpSecurityAttributes
 					Directory.CreateDirectory(newfiledir);
 				}
 			}
-			return PathBackup;
 		}
+
+
 
 		public static void MakeLink(string source, string target)
 		{
@@ -246,10 +411,10 @@ IntPtr lpSecurityAttributes
 
 			return !errors;
 		}
-		public static void CreateVHDX(string rootPath, List<string> dirList, string target)
+		public static void CreateVHDX(string rootPath, string target)
 		{
 			long totalSizeNeeded = 0;
-			foreach (var dir in dirList)
+			foreach (var dir in GameDirChanged)
 			{
 				var dirPath = Path.Combine(rootPath, dir);
 				DirectoryInfo sourceD = new DirectoryInfo(dirPath);
@@ -309,7 +474,7 @@ IntPtr lpSecurityAttributes
 
 			
 
-			foreach (var dir in dirList)
+			foreach (var dir in GameDirChanged)
 			{
 				string sourceDir = Path.Combine(rootPath, dir);
 				string targetDir = Path.Combine(driveLetter + @":/", dir);
@@ -493,6 +658,17 @@ IntPtr lpSecurityAttributes
 			return 0;
 		}
 
+		private static string[] FilterDirectories(string[] directories)
+		{
+			return directories.Where(dir =>
+			{
+				FileAttributes attributes = File.GetAttributes(dir);
+				bool isSystem = (attributes & FileAttributes.Hidden) != 0 || (attributes & FileAttributes.System) != 0;
+				bool containsLock = Path.GetFileName(dir).Contains("locks", StringComparison.OrdinalIgnoreCase);
+
+				return !isSystem && !containsLock;
+			}).ToArray();
+		}
 
 		public static async Task<string> ExecuteProcess(string message, bool returnerror = false)
 		{
