@@ -1,16 +1,31 @@
 ﻿using CliWrap;
 using CommunityToolkit.WinUI.Notifications;
 using Microsoft.Win32;
+using Microsoft.Win32.TaskScheduler;
 using PS3IsoLauncher;
 using System.Diagnostics;
+using System.IO;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using Utils;
+using Windows.Storage;
 
 internal class Program
 {
+	[DllImport("kernel32.dll")]
+	private static extern bool AllocConsole();
+
+	[DllImport("kernel32.dll")]
+	private static extern bool FreeConsole();
+
+	[DllImport("shell32.dll", SetLastError = true)]
+	static extern IntPtr CommandLineToArgvW([MarshalAs(UnmanagedType.LPWStr)] string lpCmdLine, out int pNumArgs);
+
+
 	private static void Main(string[] args)
 	{
 
@@ -57,7 +72,18 @@ internal class Program
 			{
 				var r = new RegisteryManager(Process.GetCurrentProcess().MainModule.FileName);
 				r.FixRegistery();
+
+				string exePath = Process.GetCurrentProcess().MainModule.FileName;
+				if (CheckTaskExist("IsoEnablerMount")) DeleteTask("IsoEnablerMount");
+				RegisterTask("IsoEnablerMount", exePath, "--mountvhdx");
+				if (CheckTaskExist("IsoEnablerUnmount")) DeleteTask("IsoEnablerUnmount");
+				RegisterTask("IsoEnablerUnmount", exePath, "--unmountvhdx");
+
 				SendNotification("IsoEnablerForRPCS3 Register", "rpcs3 will now accept iso");
+
+				string ConfigDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "IsoEnabler");
+				if(!Directory.Exists(ConfigDir)) Directory.CreateDirectory(ConfigDir);
+
 			}
 			return;
 		}
@@ -69,17 +95,102 @@ internal class Program
 			{
 				var r = new RegisteryManager(Process.GetCurrentProcess().MainModule.FileName);
 				r.DeleteAllDebuggerKeys();
+
+				if (CheckTaskExist("IsoEnablerMount")) DeleteTask("IsoEnablerMount");
+				if (CheckTaskExist("IsoEnablerUnmount")) DeleteTask("IsoEnablerUnmount");
+
 				SendNotification("IsoEnablerForRPCS3 UnRegister", "IsoEnabler is unregistred");
 			}
 			return;
 		}
 
+		if (args.Length == 1 && args[0] == "--mountvhdx")
+		{
+			bool isAdmin = new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
+			if (isAdmin)
+			{
+				string ConfigDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "IsoEnabler");
+				string CmdMountFile = Path.Combine(ConfigDir, "mountcmd.txt");
+				if (File.Exists(CmdMountFile))
+				{
+					bool readOnlyMount = false;
+					var fileToMount = File.ReadAllText(CmdMountFile);
+					File.Delete(CmdMountFile);
+					if (fileToMount.EndsWith(":ro"))
+					{
+						readOnlyMount = true;
+						int lastIndex = fileToMount.LastIndexOf(":ro");
+						if (lastIndex == fileToMount.Length - ":ro".Length)
+						{
+							fileToMount = fileToMount.Substring(0, lastIndex);
+						}
+
+
+					}
+					if (File.Exists(fileToMount))
+					{
+						string resultat = "";
+						System.Threading.Tasks.Task.Run(async () => { resultat = await VHDXTool.ExecuteProcess($"$drive = (Get-Partition (Get-DiskImage -ImagePath \"{fileToMount}\").Number | Get-Volume).DriveLetter;echo $drive"); }).Wait();
+						string driveLetterString = resultat.Trim();
+						if (driveLetterString.Length == 1)
+						{
+							System.Threading.Tasks.Task.Run(async () => { resultat = await VHDXTool.ExecuteProcess($"Dismount-VHD \"{fileToMount}\""); }).Wait();
+							Thread.Sleep(2000);
+						}
+
+						
+						if (readOnlyMount) System.Threading.Tasks.Task.Run(async () => { resultat = await VHDXTool.ExecuteProcess($"Mount-VHD -Path \"{fileToMount}\" -ReadOnly"); }).Wait();
+						else System.Threading.Tasks.Task.Run(async () => { resultat = await VHDXTool.ExecuteProcess($"Mount-VHD -Path \"{fileToMount}\""); }).Wait();
+					}
+				}
+			}
+			return;
+		}
+
+		if (args.Length == 1 && args[0] == "--unmountvhdx")
+		{
+			bool isAdmin = new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
+			if (isAdmin)
+			{
+				string ConfigDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "IsoEnabler");
+				string CmdMountFile = Path.Combine(ConfigDir, "unmountcmd.txt");
+				if (File.Exists(CmdMountFile))
+				{
+					var fileToMount = File.ReadAllText(CmdMountFile);
+					File.Delete(CmdMountFile);
+					if (File.Exists(fileToMount))
+					{
+						string resultat = "";
+						System.Threading.Tasks.Task.Run(async () => { resultat = await VHDXTool.ExecuteProcess($"Dismount-VHD \"{fileToMount}\""); }).Wait();
+					}
+					
+				}
+			}
+			return;
+		}
 
 		if (args.Length >= 1 && args[0].ToLower().EndsWith("rpcs3.exe"))
 		{
+
+			bool generatevhdx = false;
+			string PathBackup = "";
+
+			bool isAdmin = new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
+			if (isAdmin && args.Length == 1)
+			{
+				SendNotification("ADMIN", "MODE CREATE VHDX ON !");
+				PathBackup = VHDXTool.CreateBackupGameDir(args[0]);
+				generatevhdx = true;
+				Thread.Sleep(1000);
+			}
+
+			List<string> filteredArgs = new List<string>();
+			
 			string isopath = "";
+			string vhdxpath = "";
 			foreach (string arg in args)
 			{
+				bool hideThisArg = false;
 				if (arg.ToLower().EndsWith(".iso"))
 				{
 					if (File.Exists(arg))
@@ -87,14 +198,29 @@ internal class Program
 						isopath = arg;
 					}
 				}
+				if (arg.ToLower().EndsWith(".vhdx"))
+				{
+					if (File.Exists(arg))
+					{
+						vhdxpath = arg;
+					}
+				}
+
+				/*
+				if(arg.ToLower() == "--createvhdx")
+				{
+					hideThisArg = true;
+					generatevhdx = true;
+				}
+				*/
+				if (!hideThisArg) filteredArgs.Add(arg);
 			}
 
-			if (isopath == "")
-			{
-				var task = DirectLaunch(args);
-				task.Wait();
-			}
-			else
+			args = filteredArgs.ToArray();
+
+
+
+			if (isopath != "")
 			{
 				var targetProcess = Process.GetProcessesByName("rpcs3").FirstOrDefault(p => p.MainWindowTitle != "");
 				if (targetProcess != null)
@@ -158,10 +284,157 @@ internal class Program
 				{
 					SendNotification("IsoEnablerForRPCS3 ERROR", $"Mount failed");
 				}
+				return;
 			}
-			
+
+
+			if (vhdxpath != "")
+			{
+				
+				VHDXTool vhdxtool = null;
+				try
+				{
+					vhdxtool = new VHDXTool(vhdxpath);
+				}
+				catch (Exception ex)
+				{
+					SendNotification("IsoEnablerForRPCS3 ERROR", $"{ex.Message}");
+				}
+
+				var targetProcess = Process.GetProcessesByName("rpcs3").FirstOrDefault(p => p.MainWindowTitle != "");
+				if (targetProcess != null)
+				{
+					if (args[0].ToLower() == targetProcess.MainModule.FileName.ToLower())
+					{
+						SendNotification("IsoEnablerForRPCS3 ERROR", $"RPCS3 is already running");
+						return;
+					}
+				}
+
+
+				if (vhdxtool.Mount())
+				{
+
+
+					string ebootpath = VHDXTool.FindEboot(vhdxtool.IsoMountDrive + ":\\");
+
+
+					if (File.Exists(ebootpath) && ebootpath != "")
+					{
+						var arglist = new List<string>();
+						foreach (string arg in args)
+						{
+							if (arg == vhdxpath) arglist.Add(ebootpath);
+							else arglist.Add(arg);
+						}
+
+						var task = DirectLaunch(arglist.ToArray());
+						task.Wait();
+
+						if (!vhdxtool.Umount())
+						{
+							SendNotification("IsoEnablerForRPCS3 ERROR", $"Error Unmounting {isopath}");
+						}
+						else
+						{
+							SendNotification("IsoEnablerForRPCS3", $"Unmounting {isopath}");
+						}
+
+					}
+					else
+					{
+						SendNotification("IsoEnablerForRPCS3 ERROR", $"Can't find {ebootpath}");
+
+					}
+				}
+				else
+				{
+					SendNotification("IsoEnablerForRPCS3 ERROR", $"Mount failed");
+				}
+				return;
+			}
+
+			if (isopath == "" && vhdxpath == "")
+			{
+				List<string> gameDirChanged = new List<string>();
+				if (generatevhdx)
+				{
+
+
+					string PathGame = Path.GetDirectoryName(args[0]);
+					PathGame = Path.Combine(PathGame, "dev_hdd0", "game");
+					PathGame = Path.GetFullPath(PathGame);
+
+					SendNotification("IsoEnablerForRPCS3 DEBUG", $"{PathGame}");
+
+					FileSystemWatcher watcher = new FileSystemWatcher();
+					watcher.Path = PathGame;
+					watcher.Created += new FileSystemEventHandler((sender, args) =>
+					{
+						string intermediateDirectory = VHDXTool.GetIntermediateDirectory(PathGame, args.FullPath);
+						Console.WriteLine(intermediateDirectory);
+						if (!gameDirChanged.Contains(intermediateDirectory))
+						{
+							gameDirChanged.Add(intermediateDirectory);
+						}
+
+						//var zzz = args;
+						//SendNotification("IsoEnablerForRPCS3 DEBUG", $"{args.Name}");
+					});
+					watcher.EnableRaisingEvents = true;
+					watcher.IncludeSubdirectories = true;
+				}
+
+				var task = DirectLaunch(args);
+				task.Wait();
+
+				if (generatevhdx && gameDirChanged.Count() > 0)
+				{
+					AllocConsole();
+					Console.WriteLine("Generate VHDX");
+
+					SendNotification("IsoEnablerForRPCS3 DEBUG", $"Create VHDX");
+					string outvhdx = Path.Combine(Path.GetDirectoryName(args[0]), "out.vhdx");
+					string PathGame = Path.GetDirectoryName(args[0]);
+					PathGame = Path.Combine(PathGame, "dev_hdd0", "game");
+					PathGame = Path.GetFullPath(PathGame);
+
+					if (File.Exists(outvhdx))
+					{
+						File.Delete(outvhdx);
+					}
+					try
+					{
+						VHDXTool.CreateVHDX(PathGame, gameDirChanged, outvhdx);
+
+					}
+					catch (Exception ex)
+					{
+						SendNotification("IsoEnablerForRPCS3 DEBUG", $"{ex.Message}");
+					}
+					foreach (var dir in gameDirChanged)
+					{
+						string PathDir = Path.Combine(PathGame, dir);
+						if (Directory.Exists(PathDir)) VHDXTool.EmptyFolder(PathDir);
+						if (Directory.Exists(PathDir)) Directory.Delete(PathDir);
+
+						string ExistingData = Path.Combine(PathBackup, dir);
+						if (Directory.Exists(ExistingData))
+						{
+							Directory.Move(ExistingData, PathDir);
+						}
+					}
+
+					SendNotification("IsoEnablerForRPCS3 DEBUG", $"VHDX Created on {outvhdx}");
+					FreeConsole();
+				}
+				return;
+			}
+
 		}
 	}
+
+
 
 	public static void SendNotification(string title, string content)
 	{
@@ -178,7 +451,7 @@ internal class Program
 
 	}
 
-	public static async Task DirectLaunch(string[] args)
+	public static async System.Threading.Tasks.Task DirectLaunch(string[] args)
 	{
 
 		string JustRunExe = Path.Combine(Path.GetDirectoryName(Process.GetCurrentProcess().MainModule.FileName), "JustRun.exe");
@@ -238,6 +511,8 @@ internal class Program
 		return null;
 	}
 
+
+
 	public static string ArgsToCommandLine(string[] arguments)
 	{
 		var sb = new StringBuilder();
@@ -279,6 +554,137 @@ internal class Program
 			sb.Append(' ');
 		}
 		return sb.ToString().TrimEnd();
+	}
+
+	public static bool CheckTaskExist(string taskName)
+	{
+		using (TaskService taskService = new TaskService())
+		{
+			if (taskService.GetTask(taskName) == null)
+			{
+				return false;
+			}
+			else
+			{
+				return true;
+			}
+		}
+	}
+
+
+	public static void RegisterTask(string taskName, string executable, string arguments)
+	{
+
+		var UsersRights = TaskLogonType.InteractiveToken;
+		//UsersRights = TaskLogonType.S4U;
+		using (TaskService ts = new TaskService())
+		{
+			TaskDefinition td = ts.NewTask();
+			td.RegistrationInfo.Description = "Task as admin";
+			td.Principal.RunLevel = TaskRunLevel.Highest;
+			td.Principal.LogonType = UsersRights;
+			// Create an action that will launch Notepad whenever the trigger fires
+			td.Actions.Add(executable, arguments, null);
+			// Register the task in the root folder
+			ts.RootFolder.RegisterTaskDefinition(taskName, td, TaskCreation.CreateOrUpdate, Environment.GetEnvironmentVariable("USERNAME"), null, UsersRights, null);
+		}
+
+	}
+	public static void DeleteTask(string taskName)
+	{
+		using (TaskService ts = new TaskService())
+		{
+			// Find the task in the root folder using its name
+			var task = ts.FindTask(taskName);
+
+			if (task != null)
+			{
+				ts.RootFolder.DeleteTask(taskName);
+			}
+		}
+	}
+
+	public static string[] CommandLineToArgs(string commandLine, bool addfakeexe = true)
+	{
+		string executableName;
+		return CommandLineToArgs(commandLine, out executableName, addfakeexe);
+	}
+	public static string[] CommandLineToArgs(string commandLine, out string executableName, bool addfakeexe = true)
+	{
+		if (addfakeexe) commandLine = "test.exe " + commandLine;
+		int argCount;
+		IntPtr result;
+		string arg;
+		IntPtr pStr;
+		result = CommandLineToArgvW(commandLine, out argCount);
+		if (result == IntPtr.Zero)
+		{
+			throw new System.ComponentModel.Win32Exception();
+		}
+		else
+		{
+			try
+			{
+				// Jump to location 0*IntPtr.Size (in other words 0).  
+				pStr = Marshal.ReadIntPtr(result, 0 * IntPtr.Size);
+				executableName = Marshal.PtrToStringUni(pStr);
+				// Ignore the first parameter because it is the application   
+				// name which is not usually part of args in Managed code.   
+				string[] args = new string[argCount - 1];
+				for (int i = 0; i < args.Length; i++)
+				{
+					pStr = Marshal.ReadIntPtr(result, (i + 1) * IntPtr.Size);
+					arg = Marshal.PtrToStringUni(pStr);
+					args[i] = arg;
+				}
+				return args;
+			}
+			finally
+			{
+				Marshal.FreeHGlobal(result);
+			}
+		}
+	}
+
+	public static void ExecuteTask(string taskName, int delay = 2000)
+	{
+		string new_cmd = $@" /I /run /tn ""{taskName}""";
+		var args = CommandLineToArgs(new_cmd, false);
+
+		var TaskRun = System.Threading.Tasks.Task.Run(() =>
+		Cli.Wrap("schtasks")
+		.WithArguments(args)
+		.WithValidation(CommandResultValidation.None)
+		.ExecuteAsync()
+		);
+		TaskRun.Wait();
+
+
+		TaskService ts = new TaskService();
+		Microsoft.Win32.TaskScheduler.Task task = ts.GetTask(taskName);
+		Microsoft.Win32.TaskScheduler.RunningTaskCollection instances = task.GetInstances();
+
+		//Code a enlever si execution sans attente
+		int nbrun = delay / 100;
+		if (instances.Count == 0)
+		{
+			//MessageBox.Show("icil");
+			instances = task.GetInstances();
+			Thread.Sleep(100);
+			int i = 0;
+			while (instances.Count == 0)
+			{
+				i++;
+				instances = task.GetInstances();
+				Thread.Sleep(100);
+				if (i > nbrun) break;
+			}
+		}
+		while (instances.Count == 1)
+		{
+			instances = task.GetInstances();
+			Thread.Sleep(100);
+		}
 	}
 
 }
