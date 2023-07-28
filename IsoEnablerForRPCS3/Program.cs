@@ -158,7 +158,15 @@ internal class Program
 			bool isAdmin = new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
 			if (isAdmin && args.Length == 1)
 			{
-				SendNotification("ADMIN", "MODE CREATE VHDX ON !");
+
+				SendNotification("IsoEnablerForRPCS3 VHDXGenerator"
+					, $"RPCS3 is started as admin \n" +
+					$"VHDX GENERATOR IS ENABLED !\n" +
+					$"If you install pkg they will be deleted once the game close\n" +
+					$"And a vhdx file will be generated");
+
+
+				//SendNotification("ADMIN", "MODE CREATE VHDX ON !");
 				//Thread.Sleep(20000);
 				VHDXTool.CreateBackupGameDir(PathGame, PathBackup);
 				generatevhdx = true;
@@ -223,7 +231,7 @@ internal class Program
 						var arglist = new List<string>();
 						foreach (string arg in args)
 						{
-							if (arg == isopath) arglist.Add(ebootpath);
+							if (File.Exists(arg) && Path.GetFullPath(arg) == isopath) arglist.Add(ebootpath);
 							else arglist.Add(arg);
 						}
 
@@ -283,7 +291,7 @@ internal class Program
 					}
 				}
 
-
+				//Thread.Sleep(10000);
 				if (vhdxtool.Mount(mountvhdxasreadonly))
 				{
 
@@ -296,7 +304,7 @@ internal class Program
 						var arglist = new List<string>();
 						foreach (string arg in args)
 						{
-							if (arg == vhdxpath) arglist.Add(ebootpath);
+							if (File.Exists(arg) && Path.GetFullPath(arg) == vhdxpath) arglist.Add(ebootpath);
 							else arglist.Add(arg);
 						}
 
@@ -331,7 +339,7 @@ internal class Program
 			{
 				if (generatevhdx)
 				{
-					SendNotification("IsoEnablerForRPCS3 DEBUG", $"{PathGame}");
+					//SendNotification("IsoEnablerForRPCS3 DEBUG", $"{PathGame}");
 					VHDXTool.EnableGameDirWatcher(PathGame, PathRap);
 				}
 
@@ -342,9 +350,16 @@ internal class Program
 				if (generatevhdx && VHDXTool.GameDirChanged.Count() > 0)
 				{
 					AllocConsole();
-					Console.WriteLine("Generate VHDX");
+					
 
-					SendNotification("IsoEnablerForRPCS3 DEBUG", $"Create VHDX");
+					string TitreGenerate = "";
+					TitreGenerate = "Generate VHDX From : \n";
+					foreach(var gamedir in VHDXTool.GameDirChanged) { TitreGenerate += gamedir + "\n"; }
+					foreach (var rapfile in VHDXTool.GameRapChanged) { TitreGenerate += rapfile + "\n"; }
+
+					Console.WriteLine(TitreGenerate);
+
+					SendNotification("IsoEnablerForRPCS3 VHDXGenerator", TitreGenerate);
 					string outvhdx = Path.Combine(Path.GetDirectoryName(args[0]), "out.vhdx");
 
 					if (File.Exists(outvhdx))
@@ -358,12 +373,12 @@ internal class Program
 					}
 					catch (Exception ex)
 					{
-						SendNotification("IsoEnablerForRPCS3 DEBUG", $"{ex.Message}");
+						SendNotification("IsoEnablerForRPCS3 VHDXGenerator ERROR", $"{ex.Message}");
 					}
 
 					VHDXTool.RestoreDirFromBackup(PathGame, PathBackup);
 
-					SendNotification("IsoEnablerForRPCS3 DEBUG", $"VHDX Created on {outvhdx}");
+					SendNotification("IsoEnablerForRPCS3 VHDXGenerator", $"VHDX Created on {outvhdx}");
 					FreeConsole();
 				}
 				return;

@@ -26,8 +26,17 @@ IntPtr lpSecurityAttributes
 		public VHDXTool(string isoFilePath)
 		{
 			IsoFilePath = isoFilePath;
-			IsoMountDrive = GetIsoMountDrive();
-			if (IsoMountDrive != '\0') Umount();
+			try
+			{
+				using (FileStream fileStream = File.Open(IsoFilePath, FileMode.Open)) { }
+			}
+			catch (IOException)
+			{
+				string ConfigDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "IsoEnabler");
+				string CmdMountFile = Path.Combine(ConfigDir, "unmountcmd.txt");
+				File.WriteAllText(CmdMountFile, IsoFilePath);
+				Program.ExecuteTask("IsoEnablerUnmount");
+			}
 			//if (!IsPS3Iso()) throw new Exception("Invalid PS3 Iso");
 		}
 
@@ -228,7 +237,8 @@ IntPtr lpSecurityAttributes
 			var raplist = Directory.GetFiles(MountedDrivePath, "*.rap", SearchOption.TopDirectoryOnly);
 			foreach (var rap in raplist)
 			{
-				File.Copy(rap, Path.Combine(PathRap, rap));
+				string dest = Path.Combine(PathRap, Path.GetFileName(rap));
+				File.Copy(rap, dest, true);
 			}
 		}
 
