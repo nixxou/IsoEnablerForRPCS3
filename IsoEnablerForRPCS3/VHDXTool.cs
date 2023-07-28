@@ -57,7 +57,7 @@ IntPtr lpSecurityAttributes
 			string CmdMountFile = Path.Combine(ConfigDir, "mountcmd.txt");
 			string FileToMount = IsoFilePath;
 			if (AsReadOnly) FileToMount += ":ro";
-			File.WriteAllText(CmdMountFile, IsoFilePath);
+			File.WriteAllText(CmdMountFile, FileToMount);
 
 			Program.ExecuteTask("IsoEnablerMount");
 
@@ -449,12 +449,18 @@ IntPtr lpSecurityAttributes
 			string resultat = "";
 			var listFreeDriveLetters = Enumerable.Range('A', 'Z' - 'A' + 1).Select(i => (Char)i + ":").Except(DriveInfo.GetDrives().Select(s => s.Name.Replace("\\", ""))).ToList();
 
+			
 
 			Task.Run(async () => { resultat = await ExecuteProcess($"New-VHD -Path \"{target}\" -Dynamic -SizeBytes {totalSizeNeeded}MB"); }).Wait();
+
+			Console.WriteLine($"New-VHD -Path \"{target}\" -Dynamic -SizeBytes {totalSizeNeeded}MB");
+
 
 			if (!File.Exists(target)) throw new FileNotFoundException("error creating vhd");
 
 			Task.Run(async () => { resultat = await ExecuteProcess($"Mount-VHD -Path \"{target}\""); }).Wait();
+
+			Console.WriteLine($"Mount-VHD -Path \"{target}\"");
 
 			Task.Run(async () => { resultat = await ExecuteProcess($"$disknum=(get-vhd -path \"{target}\").DiskNumber; echo $disknum"); }).Wait();
 			resultat = resultat.Trim();
@@ -471,9 +477,13 @@ IntPtr lpSecurityAttributes
 			}
 			if (numdisk <= 0) throw new Exception("Cant find mounted disk");
 
+			Console.WriteLine($"NumDisk = \"{numdisk}\"");
+
 			Task.Run(async () => { resultat = await ExecuteProcess($"Initialize-Disk {numdisk}"); }).Wait();
+			Console.WriteLine($"Initialize-Disk {numdisk}");
 			Thread.Sleep(1000);
 			Task.Run(async () => { resultat = await ExecuteProcess($"New-Partition -AssignDriveLetter -UseMaximumSize -DiskNumber {numdisk}"); }).Wait();
+			Console.WriteLine($"New-Partition -AssignDriveLetter -UseMaximumSize -DiskNumber {numdisk}");
 			Thread.Sleep(1000);
 			Task.Run(async () => { resultat = await ExecuteProcess($"$drive = (Get-Partition (Get-DiskImage -ImagePath \"{target}\").Number | Get-Volume).DriveLetter;echo $drive"); }).Wait();
 
@@ -489,18 +499,22 @@ IntPtr lpSecurityAttributes
 				throw new Exception("Invalide drive letter");
 				return;
 			}
+			Console.WriteLine($"driveLetter = {driveLetter}");
 			Thread.Sleep(1000);
 
 			Task.Run(async () => { resultat = await ExecuteProcess($"Format-Volume -FileSystem NTFS -DriveLetter {driveLetter}"); }).Wait();
+			Console.WriteLine($"Format-Volume -FileSystem NTFS -DriveLetter {driveLetter}");
 			Thread.Sleep(1000);
 			Task.Run(async () => { resultat = await ExecuteProcess($"Set-Volume -DriveLetter {driveLetter} -NewFileSystemLabel PSNGAME"); }).Wait();
+			Console.WriteLine($"Set-Volume -DriveLetter {driveLetter} -NewFileSystemLabel PSNGAME");
 
-
-
+			Console.WriteLine($"Copy Content");
 			foreach (var dir in GameDirChanged)
 			{
 				string sourceDir = Path.Combine(rootPath, dir);
 				string targetDir = Path.Combine(driveLetter + @":/", dir);
+				Console.WriteLine($"Copy {sourceDir} to {targetDir}");
+
 				Directory.CreateDirectory(targetDir);
 				DirectoryCopy(sourceDir, targetDir, true);
 			}
@@ -508,14 +522,13 @@ IntPtr lpSecurityAttributes
 			{
 				if (File.Exists(rap))
 				{
+					Console.WriteLine($"Copy {rap}");
 					File.Copy(rap, Path.Combine(driveLetter + @":/", Path.GetFileName(rap)));
 				}
 			}
 
-			SetDiskProperty(driveLetter.ToString(), true);
-			Thread.Sleep(2000);
-
 			Task.Run(async () => { resultat = await ExecuteProcess($"Dismount-VHD \"{target}\""); }).Wait();
+			Console.WriteLine($"Dismount-VHD \"{target}\"");
 			Thread.Sleep(1000);
 
 		}

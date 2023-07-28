@@ -1,6 +1,7 @@
 ﻿using CliWrap;
 using CommunityToolkit.WinUI.Notifications;
 using Microsoft.Win32;
+using Microsoft.Win32.SafeHandles;
 using Microsoft.Win32.TaskScheduler;
 using PS3IsoLauncher;
 using System.Diagnostics;
@@ -11,8 +12,20 @@ using Utils;
 
 internal class Program
 {
-	[DllImport("kernel32.dll")]
-	private static extern bool AllocConsole();
+	[DllImport("kernel32.dll",
+		EntryPoint = "GetStdHandle",
+		SetLastError = true,
+		CharSet = CharSet.Auto,
+		CallingConvention = CallingConvention.StdCall)]
+	private static extern IntPtr GetStdHandle(int nStdHandle);
+	[DllImport("kernel32.dll",
+		EntryPoint = "AllocConsole",
+		SetLastError = true,
+		CharSet = CharSet.Auto,
+		CallingConvention = CallingConvention.StdCall)]
+	private static extern int AllocConsole();
+	private const int STD_OUTPUT_HANDLE = -11;
+	private const int MY_CODE_PAGE = 437;
 
 	[DllImport("kernel32.dll")]
 	private static extern bool FreeConsole();
@@ -200,7 +213,6 @@ internal class Program
 				if (!hideThisArg) filteredArgs.Add(arg);
 			}
 			args = filteredArgs.ToArray();
-
 			if (isopath != "")
 			{
 				var targetProcess = Process.GetProcessesByName("rpcs3").FirstOrDefault(p => p.MainWindowTitle != "");
@@ -350,7 +362,14 @@ internal class Program
 				if (generatevhdx && VHDXTool.GameDirChanged.Count() > 0)
 				{
 					AllocConsole();
-					
+					IntPtr stdHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+					SafeFileHandle safeFileHandle = new SafeFileHandle(stdHandle, true);
+					FileStream fileStream = new FileStream(safeFileHandle, FileAccess.Write);
+					Encoding encoding = System.Text.Encoding.GetEncoding(65001);
+					StreamWriter standardOutput = new StreamWriter(fileStream, encoding);
+					standardOutput.AutoFlush = true;
+					Console.SetOut(standardOutput);
+
 
 					string TitreGenerate = "";
 					TitreGenerate = "Generate VHDX From : \n";
