@@ -22,12 +22,7 @@
 * *Contact must be made to discuses permission and terms.
 */
 
-using System;
-using System.Collections.Generic;
-using System.IO;
 using System.Text;
-using System.Runtime.InteropServices;
-using System.Linq;
 
 namespace PS3ISORebuilder
 {

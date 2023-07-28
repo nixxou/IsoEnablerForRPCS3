@@ -4,12 +4,10 @@
 // Created:  2017-11-19 2:46 PM
 // Modified: 2017-11-19 6:10 PM
 
-using System;
+using Microsoft.Win32.SafeHandles;
 using System.Diagnostics.CodeAnalysis;
-using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
-using Microsoft.Win32.SafeHandles;
 
 namespace CreateMaps
 {

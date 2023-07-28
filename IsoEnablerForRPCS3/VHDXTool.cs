@@ -1,17 +1,8 @@
 ﻿using CreateMaps;
-using DiscUtils.Iso9660;
-using PS3ISORebuilder;
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
-using System.IO;
-using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
-using Windows.Gaming.UI;
 
 namespace PS3IsoLauncher
 {
@@ -31,6 +22,7 @@ IntPtr lpSecurityAttributes
 
 		public static List<String> GameDirChanged { get; set; } = new List<String>();
 
+		public static List<String> GameRapChanged { get; set; } = new List<String>();
 		public VHDXTool(string isoFilePath)
 		{
 			IsoFilePath = isoFilePath;
@@ -48,10 +40,10 @@ IntPtr lpSecurityAttributes
 			else return '\0';
 		}
 
-		public bool Mount(bool AsReadOnly=false)
+		public bool Mount(bool AsReadOnly = false)
 		{
 			var listFreeDriveLetters = Enumerable.Range('A', 'Z' - 'A' + 1).Select(i => (Char)i + ":").Except(DriveInfo.GetDrives().Select(s => s.Name.Replace("\\", ""))).ToList();
-	
+
 			string ConfigDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "IsoEnabler");
 			string CmdMountFile = Path.Combine(ConfigDir, "mountcmd.txt");
 			string FileToMount = IsoFilePath;
@@ -64,7 +56,7 @@ IntPtr lpSecurityAttributes
 			var listFreeDriveLetters2 = Enumerable.Range('A', 'Z' - 'A' + 1).Select(i => (Char)i + ":").Except(DriveInfo.GetDrives().Select(s => s.Name.Replace("\\", ""))).ToList();
 
 			string found = "";
-			foreach(var driveLetter in listFreeDriveLetters)
+			foreach (var driveLetter in listFreeDriveLetters)
 			{
 				if (!listFreeDriveLetters2.Contains(driveLetter))
 				{
@@ -106,7 +98,7 @@ IntPtr lpSecurityAttributes
 			else return false;
 		}
 
-		public static void EnableGameDirWatcher(string PathGame)
+		public static void EnableGameDirWatcher(string PathGame, string PathRap)
 		{
 			FileSystemWatcher watcher = new FileSystemWatcher();
 			watcher.Path = PathGame;
@@ -121,6 +113,18 @@ IntPtr lpSecurityAttributes
 			});
 			watcher.EnableRaisingEvents = true;
 			watcher.IncludeSubdirectories = true;
+
+			FileSystemWatcher watcherRap = new FileSystemWatcher();
+			watcherRap.Path = PathRap;
+			watcherRap.Renamed += new RenamedEventHandler((sender, args) =>
+			{
+				if (!GameRapChanged.Contains(args.FullPath))
+				{
+					GameRapChanged.Add(args.FullPath);
+				}
+			});
+
+			watcherRap.EnableRaisingEvents = true;
 		}
 
 		public static void RestoreDirFromBackup(string PathGame, string PathBackup)
@@ -219,6 +223,15 @@ IntPtr lpSecurityAttributes
 			}
 		}
 
+		public static void CopyRap(string PathRap, string MountedDrivePath)
+		{
+			var raplist = Directory.GetFiles(MountedDrivePath, "*.rap", SearchOption.TopDirectoryOnly);
+			foreach (var rap in raplist)
+			{
+				File.Copy(rap, Path.Combine(PathRap, rap));
+			}
+		}
+
 		public static string LinkBackToGameDir(string GameDir, string SourceDir, string eboot)
 		{
 			bool areGameDirAvailiable = true;
@@ -242,7 +255,7 @@ IntPtr lpSecurityAttributes
 					//Create Junction
 					JunctionPoint.Create(newDir, dirSource, true);
 				}
-				if(!String.IsNullOrWhiteSpace(eboot) && File.Exists(eboot))
+				if (!String.IsNullOrWhiteSpace(eboot) && File.Exists(eboot))
 				{
 					eboot = Path.GetFullPath(eboot);
 					if (eboot.StartsWith(SourceDir))
@@ -270,7 +283,7 @@ IntPtr lpSecurityAttributes
 			string firstDir = "";
 			var listedir = Directory.GetDirectories(sourceDir);
 			var listDirFiltered = FilterDirectories(listedir);
-			if(listDirFiltered.Count()>0 && !String.IsNullOrEmpty(listDirFiltered[0])) firstDir = listDirFiltered[0];
+			if (listDirFiltered.Count() > 0 && !String.IsNullOrEmpty(listDirFiltered[0])) firstDir = listDirFiltered[0];
 
 			if (!String.IsNullOrEmpty(firstDir))
 			{
@@ -287,10 +300,10 @@ IntPtr lpSecurityAttributes
 				RecurseSubdirectories = true,
 			});
 			List<string> listeboot = new List<string>();
-			if(firstfile != "") listeboot.Add(firstfile);
+			if (firstfile != "") listeboot.Add(firstfile);
 			foreach (string file in files)
 			{
-				if(file != firstfile)
+				if (file != firstfile)
 				{
 					listeboot.Add(file);
 				}
@@ -298,7 +311,7 @@ IntPtr lpSecurityAttributes
 
 			if (listeboot.Count() == 0) return "";
 
-			if(listeboot.Count() >= id + 1)
+			if (listeboot.Count() >= id + 1)
 			{
 				return listeboot[id].ToString();
 			}
@@ -472,7 +485,7 @@ IntPtr lpSecurityAttributes
 			Thread.Sleep(1000);
 			Task.Run(async () => { resultat = await ExecuteProcess($"Set-Volume -DriveLetter {driveLetter} -NewFileSystemLabel PSNGAME"); }).Wait();
 
-			
+
 
 			foreach (var dir in GameDirChanged)
 			{
@@ -480,6 +493,13 @@ IntPtr lpSecurityAttributes
 				string targetDir = Path.Combine(driveLetter + @":/", dir);
 				Directory.CreateDirectory(targetDir);
 				DirectoryCopy(sourceDir, targetDir, true);
+			}
+			foreach (var rap in GameRapChanged)
+			{
+				if (File.Exists(rap))
+				{
+					File.Copy(rap, Path.Combine(driveLetter + @":/", Path.GetFileName(rap)));
+				}
 			}
 
 			SetDiskProperty(driveLetter.ToString(), true);

@@ -1,20 +1,13 @@
 ﻿using CliWrap;
 using CommunityToolkit.WinUI.Notifications;
-using CreateMaps;
 using Microsoft.Win32;
 using Microsoft.Win32.TaskScheduler;
 using PS3IsoLauncher;
 using System.Diagnostics;
-using System.IO;
-using System.Reflection;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using Utils;
-using Windows.Gaming.UI;
-using Windows.Storage;
 
 internal class Program
 {
@@ -33,6 +26,8 @@ internal class Program
 
 	public static string PathBackup = "";
 
+	public static string PathRap = "";
+
 	private static void Main(string[] args)
 	{
 		/*
@@ -44,7 +39,7 @@ internal class Program
 		}
 		*/
 
-		
+
 		if (args.Length == 0)
 		{
 			if (!IsAppRegistered())
@@ -98,7 +93,7 @@ internal class Program
 				SendNotification("IsoEnablerForRPCS3 Register", "rpcs3 will now accept iso");
 
 				string ConfigDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "IsoEnabler");
-				if(!Directory.Exists(ConfigDir)) Directory.CreateDirectory(ConfigDir);
+				if (!Directory.Exists(ConfigDir)) Directory.CreateDirectory(ConfigDir);
 
 			}
 			return;
@@ -151,7 +146,12 @@ internal class Program
 			PathGame = Path.GetDirectoryName(PathRPCS);
 			PathGame = Path.Combine(PathGame, "dev_hdd0", "game");
 			PathGame = Path.GetFullPath(PathGame);
-			PathBackup = Path.Combine(PathRPCS, "GameBackup");
+			PathBackup = Path.Combine(Path.GetDirectoryName(PathRPCS), "GameBackup");
+			PathRap = Path.Combine(Path.GetDirectoryName(PathRPCS), "dev_hdd0", "home", "00000001", "exdata");
+
+			if (!Directory.Exists(PathGame)) Directory.CreateDirectory(PathGame);
+			if (!Directory.Exists(PathRap)) Directory.CreateDirectory(PathRap);
+
 
 			VHDXTool.CleanJunctions(PathGame);
 
@@ -159,6 +159,7 @@ internal class Program
 			if (isAdmin && args.Length == 1)
 			{
 				SendNotification("ADMIN", "MODE CREATE VHDX ON !");
+				//Thread.Sleep(20000);
 				VHDXTool.CreateBackupGameDir(PathGame, PathBackup);
 				generatevhdx = true;
 				Thread.Sleep(1000);
@@ -182,12 +183,12 @@ internal class Program
 						vhdxpath = Path.GetFullPath(arg);
 					}
 				}
-				if(arg.ToLower() == "--readonly")
+				if (arg.ToLower() == "--readonly")
 				{
 					hideThisArg = true;
 					mountvhdxasreadonly = true;
 				}
-				
+
 				if (!hideThisArg) filteredArgs.Add(arg);
 			}
 			args = filteredArgs.ToArray();
@@ -285,9 +286,11 @@ internal class Program
 
 				if (vhdxtool.Mount(mountvhdxasreadonly))
 				{
+
+					VHDXTool.CopyRap(PathRap, vhdxtool.IsoMountDrive + ":\\");
 					string ebootpath = VHDXTool.FindEboot(vhdxtool.IsoMountDrive + ":\\");
 					ebootpath = VHDXTool.LinkBackToGameDir(PathGame, vhdxtool.IsoMountDrive + ":\\", ebootpath);
-					
+
 					if (File.Exists(ebootpath) && ebootpath != "")
 					{
 						var arglist = new List<string>();
@@ -329,12 +332,13 @@ internal class Program
 				if (generatevhdx)
 				{
 					SendNotification("IsoEnablerForRPCS3 DEBUG", $"{PathGame}");
-					VHDXTool.EnableGameDirWatcher(PathGame);
+					VHDXTool.EnableGameDirWatcher(PathGame, PathRap);
 				}
 
 				var task = DirectLaunch(args);
 				task.Wait();
 
+				var xxx = VHDXTool.GameRapChanged;
 				if (generatevhdx && VHDXTool.GameDirChanged.Count() > 0)
 				{
 					AllocConsole();

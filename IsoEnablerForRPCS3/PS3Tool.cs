@@ -1,13 +1,7 @@
 ﻿using DiscUtils.Iso9660;
 using PS3ISORebuilder;
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
-using System.IO;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace PS3IsoLauncher
 {
@@ -155,7 +149,7 @@ namespace PS3IsoLauncher
 
 		private bool IsPS3Iso()
 		{
-			if(IsoMountDrive == '\0')
+			if (IsoMountDrive == '\0')
 			{
 				CDBuilder builder = new CDBuilder();
 				using (FileStream fs = System.IO.File.Open(IsoFilePath, FileMode.Open))
@@ -191,7 +185,7 @@ namespace PS3IsoLauncher
 			{
 				string ebootpath = Path.Combine(IsoMountDrive + ":\\", "PS3_GAME", "USRDIR", "EBOOT.BIN");
 				string parampath = Path.Combine(IsoMountDrive + ":\\", "PS3_GAME", "PARAM.SFO");
-				if(File.Exists(ebootpath) && File.Exists(parampath))
+				if (File.Exists(ebootpath) && File.Exists(parampath))
 				{
 					try
 					{
