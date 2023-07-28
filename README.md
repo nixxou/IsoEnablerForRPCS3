@@ -1,5 +1,5 @@
 # IsoEnablerForRPCS3
-[![Watch the video]](https://youtu.be/Zya1RVTpS0s)
+[![Watch the video](https://pasteboard.co/ZLr9O7D1KMC0.png)](https://youtu.be/Zya1RVTpS0s)
 
 After double click : 
 - rpcs3.exe will works with iso. For exemple rpcs3.exe yourgame.iso
