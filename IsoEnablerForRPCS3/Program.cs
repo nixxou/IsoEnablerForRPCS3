@@ -35,15 +35,14 @@ internal class Program
 
 	private static void Main(string[] args)
 	{
-		
+		/*
 		bool isAdminFA = new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
 		if (!isAdminFA)
 		{
 			List<string> fakeArgs = new List<string>();
-			fakeArgs.Add(@"C:\Users\Mehdi\Downloads\rpcs3V2\rpcs3.exe");
-			fakeArgs.Add(@"C:\Users\Mehdi\Downloads\rpcs3V2\out.vhdx");
 			args = fakeArgs.ToArray();
 		}
+		*/
 
 		
 		if (args.Length == 0)
